@@ -1,0 +1,19 @@
+{
+  "name": "korg",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "scan": "node scan-ble.js",
+    "midi": "node connect-midi.js",
+    "dump": "node dump-ble.js",
+    "dump:objc": "clang -fobjc-arc -framework Foundation -framework CoreBluetooth dump-ble.m -o /tmp/korg-dump-ble && /tmp/korg-dump-ble"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@abandonware/noble": "^1.9.2-26"
+  }
+}
