@@ -1,10 +1,17 @@
 #import <CoreBluetooth/CoreBluetooth.h>
 #import <Foundation/Foundation.h>
 
-static NSString *DeviceNameFilter(void) {
-    NSString *value = [[[NSProcessInfo processInfo] environment] objectForKey:@"DEVICE_NAME"];
-    if (value.length == 0) return @"nanokey";
-    return [value lowercaseString];
+static NSFileHandle *logFile = nil;
+
+static void Log(NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    NSLog(@"%@", msg);
+    if (logFile) {
+        [logFile writeData:[[msg stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding]];
+    }
 }
 
 static NSString *Hex(NSData *data) {
@@ -27,201 +34,189 @@ static NSString *Ascii(NSData *data) {
 }
 
 static void PrintData(NSString *source, NSData *data) {
-    if (data.length == 0) return;
-
-    NSDateFormatter *formatter = [NSDateFormatter new];
-    formatter.dateFormat = @"yyyy-MM-dd'T'HH:mm:ss.SSSZZZZZ";
-    formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
-
-    printf("[%s] %s\n", [[formatter stringFromDate:[NSDate date]] UTF8String], [source UTF8String]);
-    printf("  len:   %lu\n", (unsigned long)data.length);
-    printf("  hex:   %s\n", [Hex(data) UTF8String]);
-    printf("  ascii: %s\n", [Ascii(data) UTF8String]);
+    if (!data || data.length == 0) return;
+    Log(@"DATA %@ len=%lu hex=%@ ascii=%@", source, (unsigned long)data.length, Hex(data), Ascii(data));
 }
 
-static NSString *DescribeProperties(CBCharacteristicProperties properties) {
-    NSMutableArray<NSString *> *names = [NSMutableArray array];
-    if (properties & CBCharacteristicPropertyBroadcast) [names addObject:@"broadcast"];
-    if (properties & CBCharacteristicPropertyRead) [names addObject:@"read"];
-    if (properties & CBCharacteristicPropertyWriteWithoutResponse) [names addObject:@"writeWithoutResponse"];
-    if (properties & CBCharacteristicPropertyWrite) [names addObject:@"write"];
-    if (properties & CBCharacteristicPropertyNotify) [names addObject:@"notify"];
-    if (properties & CBCharacteristicPropertyIndicate) [names addObject:@"indicate"];
-    if (properties & CBCharacteristicPropertyAuthenticatedSignedWrites) [names addObject:@"authenticatedSignedWrites"];
-    if (properties & CBCharacteristicPropertyExtendedProperties) [names addObject:@"extendedProperties"];
-    if (properties & CBCharacteristicPropertyNotifyEncryptionRequired) [names addObject:@"notifyEncryptionRequired"];
-    if (properties & CBCharacteristicPropertyIndicateEncryptionRequired) [names addObject:@"indicateEncryptionRequired"];
-    return names.count == 0 ? @"-" : [names componentsJoinedByString:@","];
+static NSString *ShortProps(CBCharacteristicProperties p) {
+    NSMutableArray *a = [NSMutableArray array];
+    if (p & CBCharacteristicPropertyRead) [a addObject:@"R"];
+    if (p & CBCharacteristicPropertyWrite) [a addObject:@"W"];
+    if (p & CBCharacteristicPropertyWriteWithoutResponse) [a addObject:@"WNR"];
+    if (p & CBCharacteristicPropertyNotify) [a addObject:@"N"];
+    if (p & CBCharacteristicPropertyIndicate) [a addObject:@"I"];
+    if (p & CBCharacteristicPropertyNotifyEncryptionRequired) [a addObject:@"Nenc"];
+    if (p & CBCharacteristicPropertyIndicateEncryptionRequired) [a addObject:@"Ienc"];
+    return [a componentsJoinedByString:@","];
 }
 
 @interface BleDumper : NSObject <CBCentralManagerDelegate, CBPeripheralDelegate>
 @property(nonatomic, strong) CBCentralManager *central;
 @property(nonatomic, strong) CBPeripheral *peripheral;
-@property(nonatomic, copy) NSString *nameFilter;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, CBCharacteristic *> *allChars;
+@property(nonatomic, assign) BOOL didConnect;
+@property(nonatomic, assign) BOOL didDiscover;
+@property(nonatomic, assign) int pairAttempts;
 @end
 
 @implementation BleDumper
 
 - (instancetype)init {
     self = [super init];
-    if (!self) return nil;
-
-    _nameFilter = DeviceNameFilter();
+    _allChars = [NSMutableDictionary dictionary];
     _central = [[CBCentralManager alloc] initWithDelegate:self queue:dispatch_get_main_queue()];
     return self;
 }
 
 - (void)centralManagerDidUpdateState:(CBCentralManager *)central {
-    printf("Bluetooth state: %ld\n", (long)central.state);
-
-    if (central.state != CBManagerStatePoweredOn) {
-        printf("Bluetooth is not powered on/ready yet.\n");
-        return;
-    }
-
-    printf("Scanning for device name containing: %s\n", [self.nameFilter UTF8String]);
-    [central scanForPeripheralsWithServices:nil options:@{ CBCentralManagerScanOptionAllowDuplicatesKey: @YES }];
+    Log(@"STATE: %ld", (long)central.state);
+    if (central.state != CBManagerStatePoweredOn) return;
+    Log(@"SCANNING for 'nanokey'...");
+    [central scanForPeripheralsWithServices:nil options:@{CBCentralManagerScanOptionAllowDuplicatesKey: @YES}];
 }
 
-- (void)centralManager:(CBCentralManager *)central
- didDiscoverPeripheral:(CBPeripheral *)peripheral
-     advertisementData:(NSDictionary<NSString *, id> *)advertisementData
-                  RSSI:(NSNumber *)RSSI {
-    NSString *localName = advertisementData[CBAdvertisementDataLocalNameKey];
-    NSString *name = localName.length > 0 ? localName : (peripheral.name.length > 0 ? peripheral.name : @"<no name>");
+- (void)centralManager:(CBCentralManager *)central didDiscoverPeripheral:(CBPeripheral *)peripheral advertisementData:(NSDictionary<NSString *,id> *)adData RSSI:(NSNumber *)rssi {
+    NSString *name = adData[CBAdvertisementDataLocalNameKey] ?: peripheral.name ?: @"";
+    if ([name.lowercaseString rangeOfString:@"nanokey"].location == NSNotFound) return;
 
-    if ([[name lowercaseString] rangeOfString:self.nameFilter].location == NSNotFound) return;
-
-    printf("Found %s\n", [name UTF8String]);
-    printf("identifier: %s\n", [peripheral.identifier.UUIDString UTF8String]);
-    printf("rssi: %s\n", [[RSSI stringValue] UTF8String]);
-
-    NSArray<CBUUID *> *serviceUuids = advertisementData[CBAdvertisementDataServiceUUIDsKey];
-    if (serviceUuids.count > 0) {
-        NSMutableArray<NSString *> *values = [NSMutableArray array];
-        for (CBUUID *uuid in serviceUuids) [values addObject:uuid.UUIDString];
-        printf("advertised services: %s\n", [[values componentsJoinedByString:@", "] UTF8String]);
-    }
-
-    NSData *manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey];
-    if (manufacturerData.length > 0) PrintData(@"manufacturer data", manufacturerData);
-
+    Log(@"FOUND: %@ (id=%@ rssi=%@)", name, peripheral.identifier.UUIDString, rssi);
     self.peripheral = peripheral;
     peripheral.delegate = self;
     [central stopScan];
-    // Try connection with notification options
-    NSDictionary *connectOptions = @{
+
+    Log(@"CONNECTING...");
+    [central connectPeripheral:peripheral options:@{
         CBConnectPeripheralOptionNotifyOnConnectionKey: @YES,
         CBConnectPeripheralOptionNotifyOnDisconnectionKey: @YES,
         CBConnectPeripheralOptionNotifyOnNotificationKey: @YES,
-    };
-    printf("Connecting with options...\n");
-    [central connectPeripheral:peripheral options:connectOptions];
+    }];
 }
 
 - (void)centralManager:(CBCentralManager *)central didConnectPeripheral:(CBPeripheral *)peripheral {
-    printf("Connected. Waiting 500ms before service discovery...\n");
-    // Some BLE devices need a short delay after connection before GATT operations
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        printf("Discovering services...\n");
+    Log(@"CONNECTED. Starting discovery in 1s...");
+    self.didConnect = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         [peripheral discoverServices:nil];
     });
 }
 
 - (void)centralManager:(CBCentralManager *)central didFailToConnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error {
-    printf("Failed to connect: %s\n", [error.localizedDescription UTF8String]);
+    Log(@"CONNECT FAIL: %@", error);
     exit(1);
 }
 
 - (void)centralManager:(CBCentralManager *)central didDisconnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error {
-    printf("Disconnected.\n");
-    if (error) {
-        printf("  domain: %s\n", [error.domain UTF8String]);
-        printf("  code: %ld\n", (long)error.code);
-        printf("  description: %s\n", [error.localizedDescription UTF8String]);
-        if (error.userInfo) {
-            printf("  userInfo: %s\n", [[error.userInfo description] UTF8String]);
-        }
-    } else {
-        printf("  no error\n");
+    Log(@"DISCONNECTED: %@ (code=%ld)", error.localizedDescription ?: @"no error", (long)error.code);
+    if (error && (error.code == CBErrorConnectionTimeout || error.code == CBErrorPeripheralDisconnected)) {
+        Log(@"Device requires pairing to stay connected. Check Bluetooth system dialog.");
     }
     exit(0);
 }
 
 - (void)peripheral:(CBPeripheral *)peripheral didDiscoverServices:(NSError *)error {
-    if (error) {
-        printf("Service discovery failed: %s\n", [error.localizedDescription UTF8String]);
-        exit(1);
-    }
-
-    printf("Services (%lu):\n", (unsigned long)peripheral.services.count);
-    for (CBService *service in peripheral.services) {
-        printf("  %s\n", [service.UUID.UUIDString UTF8String]);
-        [peripheral discoverCharacteristics:nil forService:service];
+    if (error) { Log(@"SERVICE ERR: %@", error); exit(1); }
+    Log(@"SERVICES: %lu found", (unsigned long)peripheral.services.count);
+    for (CBService *s in peripheral.services) {
+        Log(@"  svc: %@", s.UUID.UUIDString);
+        [peripheral discoverCharacteristics:nil forService:s];
     }
 }
 
 - (void)peripheral:(CBPeripheral *)peripheral didDiscoverCharacteristicsForService:(CBService *)service error:(NSError *)error {
-    if (error) {
-        printf("Characteristic discovery failed for %s: %s\n", [service.UUID.UUIDString UTF8String], [error.localizedDescription UTF8String]);
-        return;
-    }
+    if (error) { Log(@"CHAR ERR for %@: %@", service.UUID.UUIDString, error); return; }
+    Log(@"CHARS for %@: %lu found", service.UUID.UUIDString, (unsigned long)service.characteristics.count);
+    for (CBCharacteristic *c in service.characteristics) {
+        NSString *key = [NSString stringWithFormat:@"%@/%@", service.UUID.UUIDString, c.UUID.UUIDString];
+        self.allChars[key] = c;
+        Log(@"  char: %@ [%@]", c.UUID.UUIDString, ShortProps(c.properties));
 
-    printf("Characteristics for service %s (%lu):\n", [service.UUID.UUIDString UTF8String], (unsigned long)service.characteristics.count);
-    for (CBCharacteristic *characteristic in service.characteristics) {
-        printf("  %s properties=%s\n", [characteristic.UUID.UUIDString UTF8String], [DescribeProperties(characteristic.properties) UTF8String]);
-        [peripheral discoverDescriptorsForCharacteristic:characteristic];
-
-        if (characteristic.properties & CBCharacteristicPropertyRead) {
-            [peripheral readValueForCharacteristic:characteristic];
-        }
-
-        if ((characteristic.properties & CBCharacteristicPropertyNotify) || (characteristic.properties & CBCharacteristicPropertyIndicate)) {
-            printf("  enabling notify for %s/%s\n", [service.UUID.UUIDString UTF8String], [characteristic.UUID.UUIDString UTF8String]);
-            [peripheral setNotifyValue:YES forCharacteristic:characteristic];
+        if (c.properties & CBCharacteristicPropertyRead) {
+            Log(@"  -> reading %@ (may trigger pairing dialog!)", key);
+            [peripheral readValueForCharacteristic:c];
         }
     }
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        [self enableNotifications];
+    });
 }
 
-- (void)peripheral:(CBPeripheral *)peripheral didDiscoverDescriptorsForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error {
-    if (error) {
-        printf("Descriptor discovery failed for %s: %s\n", [characteristic.UUID.UUIDString UTF8String], [error.localizedDescription UTF8String]);
-        return;
-    }
-
-    for (CBDescriptor *descriptor in characteristic.descriptors) {
-        printf("    descriptor %s for characteristic %s\n", [descriptor.UUID.UUIDString UTF8String], [characteristic.UUID.UUIDString UTF8String]);
+- (void)enableNotifications {
+    Log(@"Enabling notifications on appropriate characteristics...");
+    for (NSString *key in self.allChars) {
+        CBCharacteristic *c = self.allChars[key];
+        if ((c.properties & CBCharacteristicPropertyNotify) || (c.properties & CBCharacteristicPropertyIndicate)) {
+            Log(@"  -> enabling notify on %@...", key);
+            [self.peripheral setNotifyValue:YES forCharacteristic:c];
+        }
     }
 }
 
 - (void)peripheral:(CBPeripheral *)peripheral didUpdateValueForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error {
+    NSString *key = [NSString stringWithFormat:@"%@/%@", characteristic.service.UUID.UUIDString, characteristic.UUID.UUIDString];
+
     if (error) {
-        printf("Value update failed for %s: %s\n", [characteristic.UUID.UUIDString UTF8String], [error.localizedDescription UTF8String]);
+        Log(@"READ ERR %@: %@ (domain=%@ code=%ld)", key, error.localizedDescription, error.domain, (long)error.code);
+        if (error.code == CBATTErrorInsufficientAuthentication || error.code == CBATTErrorInsufficientEncryption) {
+            Log(@"  -> Pairing REQUIRED! macOS should show pairing dialog.");
+            Log(@"  -> Check: System Settings > Bluetooth");
+            Log(@"  -> If dialog didn't appear, try: Audio MIDI Setup > MIDI Studio > Bluetooth Configuration");
+            self.pairAttempts++;
+            if (self.pairAttempts < 5) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                    Log(@"  -> RETRYING read %@ (pairing should be in progress)...", key);
+                    [peripheral readValueForCharacteristic:characteristic];
+                });
+            }
+        }
         return;
     }
 
-    NSString *source = [NSString stringWithFormat:@"value %@/%@", characteristic.service.UUID.UUIDString, characteristic.UUID.UUIDString];
-    PrintData(source, characteristic.value);
+    Log(@"READ OK %@", key);
+    PrintData(key, characteristic.value);
 }
 
 - (void)peripheral:(CBPeripheral *)peripheral didUpdateNotificationStateForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error {
+    NSString *key = [NSString stringWithFormat:@"%@/%@", characteristic.service.UUID.UUIDString, characteristic.UUID.UUIDString];
     if (error) {
-        printf("Notify failed %s/%s: %s\n", [characteristic.service.UUID.UUIDString UTF8String], [characteristic.UUID.UUIDString UTF8String], [error.localizedDescription UTF8String]);
+        Log(@"NOTIFY ERR %@: %@ (domain=%@ code=%ld)", key, error.localizedDescription, error.domain, (long)error.code);
+        if (error.code == CBATTErrorInsufficientAuthentication || error.code == CBATTErrorInsufficientEncryption) {
+            Log(@"  -> Pairing REQUIRED for notifications!");
+        }
         return;
     }
+    Log(@"NOTIFY %@: %s", key, characteristic.isNotifying ? "ON" : "OFF");
+    if (characteristic.isNotifying) {
+        Log(@"  -> READY! Press keys/pads/knobs now. Data will appear here.");
+    }
+}
 
-    printf("Notify state %s/%s: %s\n", [characteristic.service.UUID.UUIDString UTF8String], [characteristic.UUID.UUIDString UTF8String], characteristic.isNotifying ? "true" : "false");
+- (void)peripheral:(CBPeripheral *)peripheral didDiscoverDescriptorsForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error {
+    for (CBDescriptor *d in characteristic.descriptors ?: @[]) {
+        Log(@"  desc: %@", d.UUID.UUIDString);
+    }
 }
 
 @end
 
-static BleDumper *globalDumper;
-
 int main(void) {
     @autoreleasepool {
-        setvbuf(stdout, NULL, _IONBF, 0);
-        globalDumper = [BleDumper new];
-        printf("CoreBluetooth Objective-C BLE dump started. Ctrl+C to stop.\n");
+        NSString *logPath = @"/tmp/korg-dump.log";
+        [[NSFileManager defaultManager] createFileAtPath:logPath contents:nil attributes:nil];
+        logFile = [NSFileHandle fileHandleForWritingAtPath:logPath];
+        [logFile truncateFileAtOffset:0];
+        setvbuf(stdout, NULL, _IOLBF, 0);
+
+        Log(@"=== KORG BLE DUMP v3 (with pairing support) ===");
+        Log(@"Log: %@", logPath);
+        printf("=== KORG BLE DUMP v3 ===\n");
+        printf("Log: %s\n", [logPath UTF8String]);
+        printf("Make sure nanoKEY Studio is ON and in Bluetooth range.\n");
+        printf("If pairing dialog appears - ACCEPT IT.\n");
+        printf("Ctrl+C to stop.\n\n");
+
+        BleDumper *d = [BleDumper new];
+        (void)d;
         [[NSRunLoop mainRunLoop] run];
     }
     return 0;
