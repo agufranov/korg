@@ -2,6 +2,8 @@
 
 Мы пытаемся заставить KORG nanoKEY Studio работать по Bluetooth на macOS/Apple Silicon, где официальный путь через **Audio MIDI Setup** и приложение **KORG Bluetooth MIDI Connect** видит устройство, но не подключает его.
 
+Текущая машина пользователя: **MacBook Pro 14", Apple M3 Pro, 36 GB RAM, macOS Sonoma 14.6**.
+
 ## Где мы сейчас
 
 Устройство видно на уровне BLE. Оно рекламирует стандартный BLE-MIDI сервис:
@@ -81,20 +83,20 @@ CABTLEMIDIWindowController
 1. Улучшить native CoreBluetooth dumper (`dump-ble.m`): больше логов, повторные попытки read/notify, точная диагностика состояния peripheral.
 2. Сделать LLDB-трассировку `Bluetooth MIDI Connect.app`, чтобы увидеть реальные вызовы CoreBluetooth и ошибки при нажатии Connect.
 3. Исследовать KORG firmware updater, если он доступен: возможно, он использует vendor-сервис и может показать протокол/версию прошивки.
-4. Если software tracing не хватит — использовать BLE-сниффер:
+4. Собрать данные с Windows-машины, где nanoKEY Studio подключается успешно. Инструкция: [`windows-investigation.md`](./windows-investigation.md).
+5. Если software tracing не хватит — использовать BLE-сниффер:
    - Apple PacketLogger, если установить Additional Tools for Xcode;
    - лучше nRF52840 BLE sniffer + Wireshark.
-5. Дальняя цель — свой мост CoreBluetooth -> CoreMIDI, который создаёт virtual MIDI input. Но сначала надо победить BLE authentication/encryption.
+6. Дальняя цель — свой мост CoreBluetooth -> CoreMIDI, который создаёт virtual MIDI input. Но сначала надо победить BLE authentication/encryption.
 
 ## Что нужно от человека сейчас
 
 На данном этапе полезно:
 
-1. Сообщить модель Mac и версию macOS.
+1. На Windows выполнить инструкцию из [`windows-investigation.md`](./windows-investigation.md).
 2. Проверить, какая версия прошивки у nanoKEY Studio, если KORG updater это показывает.
-3. Если есть Windows-машина, где устройство работает — это очень ценно для сравнения.
-4. Если возможно достать nRF52840 dongle — это даст шанс снять настоящий BLE packet trace и сравнить Windows success vs macOS failure.
-5. Не делать случайные записи в vendor characteristic без осознанного решения: там может быть служебный/firmware/update протокол.
+3. Если возможно достать nRF52840 dongle — это даст шанс снять настоящий BLE packet trace и сравнить Windows success vs macOS failure.
+4. Не делать случайные записи в vendor characteristic без осознанного решения: там может быть служебный/firmware/update протокол.
 
 ## Документация состояния
 

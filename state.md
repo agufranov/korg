@@ -19,7 +19,11 @@ We are doing diagnostics/reverse engineering, not just following the official in
 ## Environment facts
 
 - Workspace: `/Users/gufranov_a/src/korg`
-- OS: macOS Sonoma according to environment, Apple Silicon target observed from tools.
+- User's Mac from screenshot:
+  - MacBook Pro 14-inch, November 2023
+  - Apple M3 Pro
+  - 36 GB RAM
+  - macOS Sonoma 14.6
 - Shell: `/bin/zsh`
 - Node: `v24.15.0`
 - npm: `11.12.1`
@@ -265,6 +269,11 @@ Note: plain `log` can conflict with zsh behavior; use `/usr/bin/log`.
 5. Longer-term workaround target:
    - custom CoreBluetooth/CoreMIDI bridge that connects to nanoKEY Studio, obtains a secure BLE link, reads BLE-MIDI notifications, and exposes a virtual MIDI source.
    - The blocker is initiating/completing pairing/authentication from macOS.
+
+6. Windows investigation is now requested/available because the user has a Windows machine where the keyboard connects successfully. See `windows-investigation.md`.
+   - Highest-value artifact: a BLE trace of successful Windows connection.
+   - If no external sniffer exists, collect Windows ETW Bluetooth logs and driver/app metadata first.
+   - If an nRF52840 dongle can be acquired, capture over-the-air pairing/security and ATT flow with Wireshark.
 
 ## Things not to assume
 
