@@ -23,7 +23,7 @@ npm run dump:objc  # GATT dump напрямую через macOS CoreBluetooth
 
 Wireshark CLI tools (`tshark`, `capinfos`, `editcap`, `mergecap`, `rawshark`) установлены через Homebrew в `/opt/homebrew/bin`. Дальше `.pcapng`-дампы разбираем ими, а не самописным быстрым парсером.
 
-Самый важный результат дал `npm run dump:objc`: macOS напрямую сообщает, что для чтения/notify не хватает BLE security:
+На macOS самый важный результат дал `npm run dump:objc`: macOS напрямую сообщает, что для чтения/notify не хватает BLE security:
 
 ```text
 Authentication is insufficient
@@ -31,6 +31,43 @@ Encryption is insufficient
 ```
 
 То есть проблема сейчас не в парсинге MIDI. MIDI-байты просто не приходят, потому что устройство требует authenticated/encrypted BLE-соединение, а macOS/KORG flow его не создаёт или не завершает.
+
+Windows/nRF Sniffer capture уже получен. Самые важные файлы:
+
+```text
+5.pcapng  Windows pairing/encryption + GATT discovery
+6.pcapng  полный рабочий Windows BLE-MIDI flow
+```
+
+`6.pcapng` показывает успешный путь Windows:
+
+1. `CONNECT_IND` к `10:98:C3:53:6B:1B`.
+2. SMP pairing: Windows central запрашивает Bonding + MITM.
+3. LL encryption: `LL_ENC_REQ/RSP`, `LL_START_ENC_REQ/RSP`.
+4. GATT discovery.
+5. Подписка на BLE-MIDI CCCD:
+
+   ```text
+   handle 0x001c = CCCD для 7772E5DB-3868-4112-A1A9-F2669D106BF3
+   write value 0x0001 = Notification enabled
+   ```
+
+6. Реальные BLE-MIDI notifications с:
+
+   ```text
+   handle 0x001b = BLE-MIDI characteristic value
+   ```
+
+Примеры payload из `6.pcapng`:
+
+```text
+95 ed 90 47 4d
+97 c3 80 47 40
+9e 9f 90 47 3d
+9f db 80 47 40
+```
+
+Они выглядят как стандартные BLE-MIDI packets: timestamp bytes + MIDI channel messages (`0x90` note on, `0x80` note off). В успешном Windows flow не видно необходимости в KORG vendor characteristic: записи в `0x0017/0x0018` не наблюдались.
 
 ## Что нашли внутри устройства
 
@@ -80,25 +117,24 @@ CABTLEMIDIWindowController
 
 ## Что предстоит сделать
 
-Ближайшие технические шаги:
+Ближайшие технические шаги после Windows capture:
 
 1. Улучшить native CoreBluetooth dumper (`dump-ble.m`): больше логов, повторные попытки read/notify, точная диагностика состояния peripheral.
 2. Сделать LLDB-трассировку `Bluetooth MIDI Connect.app`, чтобы увидеть реальные вызовы CoreBluetooth и ошибки при нажатии Connect.
-3. Исследовать KORG firmware updater, если он доступен: возможно, он использует vendor-сервис и может показать протокол/версию прошивки.
-4. Собрать данные с Windows-машины, где nanoKEY Studio подключается успешно. Инструкция: [`windows-investigation.md`](./windows-investigation.md).
-5. Если software tracing не хватит — использовать BLE-сниффер:
+3. Сравнить macOS failure с Windows success из `5.pcapng`/`6.pcapng`, особенно момент, где Windows инициирует SMP pairing + LL encryption.
+4. Исследовать KORG firmware updater, если он доступен: возможно, он покажет версию прошивки.
+5. Если software tracing не хватит — использовать дополнительный BLE-сниффинг на macOS:
    - Apple PacketLogger, если установить Additional Tools for Xcode;
-   - лучше nRF52840 BLE sniffer + Wireshark.
+   - nRF52840 BLE sniffer + Wireshark.
 6. Дальняя цель — свой мост CoreBluetooth -> CoreMIDI, который создаёт virtual MIDI input. Но сначала надо победить BLE authentication/encryption.
 
 ## Что нужно от человека сейчас
 
 На данном этапе полезно:
 
-1. На Windows выполнить инструкцию из [`windows-investigation.md`](./windows-investigation.md).
+1. Вернуться к macOS и выяснить, как заставить CoreBluetooth инициировать pairing/encryption для nanoKEY.
 2. Проверить, какая версия прошивки у nanoKEY Studio, если KORG updater это показывает.
-3. Если возможно достать nRF52840 dongle — это даст шанс снять настоящий BLE packet trace и сравнить Windows success vs macOS failure.
-4. Не делать случайные записи в vendor characteristic без осознанного решения: там может быть служебный/firmware/update протокол.
+3. Не делать случайные записи в vendor characteristic без осознанного решения: там может быть служебный/firmware/update протокол.
 
 ## Документация состояния
 

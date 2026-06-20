@@ -318,6 +318,250 @@ Interpretation: the nRF sniffer did not follow the data-channel connection. The 
 
 Next capture must ensure Wireshark/nRF Sniffer follows the selected `nanoKEY Studio` connection. In Wireshark, select the device in the nRF Sniffer device list before/while connecting and verify packets with the new connection access address appear after CONNECT_IND.
 
+## Windows nRF capture `2.pcapng` analysis, 2026-06-20
+
+User provided `2.pcapng` captured on Windows. Local quick parser results:
+
+```text
+file: 2.pcapng
+size: 18,372 bytes
+packets: 207
+nanoKEY advertiser address: 10:98:C3:53:6B:1B
+advertised name: nanoKEY Studio
+advertised BLE-MIDI service: 03B80E5A-EDE8-4B33-A751-6CE34EC4C700
+Windows central/init address: E8:48:B8:C8:20:00
+```
+
+This capture did catch two real CONNECT_IND packets to nanoKEY:
+
+```text
+packet 11:
+  initA: E8:48:B8:C8:20:00
+  advA:  10:98:C3:53:6B:1B
+  access address: adc0948a (display) / 8a94c0ad (little-endian in file)
+
+packet 206:
+  initA: E8:48:B8:C8:20:00
+  advA:  10:98:C3:53:6B:1B
+  access address: 4b28a60b (display) / 0ba6284b (little-endian in file)
+```
+
+Critical limitation remains:
+
+```text
+8a94c0ad occurrences: 1 packet only (the CONNECT_IND itself)
+0ba6284b occurrences: 1 packet only (the CONNECT_IND itself)
+```
+
+Interpretation: `2.pcapng` is better than `1.pcapng` because it proves Windows attempted two connections to the correct nanoKEY address, but the nRF sniffer still did not follow either data-channel connection. It still does not include SMP pairing, LL encryption, ATT/GATT, CCCD subscription, vendor writes, or BLE-MIDI notifications.
+
+## Windows nRF capture `3.pcapng` analysis, 2026-06-20
+
+User found the nRF Sniffer toolbar in Wireshark and configured:
+
+```text
+Interface: COM5-4.6
+Device: All advertising devices
+Key: Follow LE address
+Value: 10:98:c3:53:6b:1b public
+Adv Hop: 37,38,39
+```
+
+This finally made the sniffer follow the connection. Quick parser results:
+
+```text
+file: 3.pcapng
+size: 3,520 bytes
+packets: 39
+nanoKEY advertiser address: 10:98:C3:53:6B:1B
+Windows central/init address: E8:48:B8:C8:20:00
+CONNECT_IND packet: 17
+connection access address: cae0689a (display) / 9a68e0ca (little-endian in file)
+connection access address occurrences: 9 packets total
+```
+
+Interpretation: `3.pcapng` is the first capture that actually includes data-channel packets after CONNECT_IND. It is still very short: only 8 post-CONNECT_IND data-channel packets were captured. The visible post-CONNECT_IND payloads look like early LL data/control traffic, not yet enough to analyze the full Windows success path. Need a longer capture with the same toolbar settings, keeping capture running through successful Windows connection plus key/pad/knob input.
+
+## Windows nRF capture `4.pcapng` analysis, 2026-06-20
+
+User provided a longer capture after finding the toolbar.
+
+```text
+file: 4.pcapng
+size: 671,748 bytes
+duration: ~87.823 s
+packets: 7,985
+encapsulation: nRF Sniffer for Bluetooth LE / LINKTYPE_NORDIC_BLE
+```
+
+This capture contains a valid CONNECT_IND to nanoKEY:
+
+```text
+frame 3432 / parser index 3431, +32.441904s:
+  initA: E8:48:B8:C8:20:00
+  advA:  10:98:C3:53:6B:1B
+  access address: 694af5c9 (display) / c9f54a69 (little-endian in file)
+  interval: 48 * 1.25ms = 60ms
+  latency: 0
+  supervision timeout: 960 * 10ms = 9.6s
+  channel map: ff ff ff ff 1f
+```
+
+Critical limitation: `c9f54a69` occurs only once, in the CONNECT_IND itself. Wireshark/tshark protocol hierarchy shows only `btle` advertising-layer traffic and no `btsmp`, `btatt`, or `btgatt`. So `4.pcapng` is a long capture, but it did not follow the data-channel connection. `3.pcapng` remains the only capture so far that proved data-channel follow worked.
+
+Practical implication: the toolbar settings can work, but the long capture likely started without the follow address being actively applied, or the sniffer failed to synchronize after this specific CONNECT_IND. Before the next long capture, click/apply the toolbar control next to `Value` after setting `Key = Follow LE address` and `Value = 10:98:c3:53:6b:1b public`, then verify immediately after CONNECT_IND that packets with the new connection access address continue appearing.
+
+## Windows nRF capture `5.pcapng` analysis, 2026-06-20
+
+This is the first useful long Windows success-path capture.
+
+```text
+file: 5.pcapng
+size: 596,772 bytes
+packets: 9,894
+nanoKEY advertiser address: 10:98:C3:53:6B:1B
+Windows central/init address: E8:48:B8:C8:20:00
+CONNECT_IND frame: 58
+connection access address: dbf30e2a (display) / 2a0ef3db (little-endian in file)
+connection access address occurrences: 9,837 packets
+connection interval: 7.5ms
+latency: 0
+supervision timeout: 2s
+channel map: 3e fe ff ff 1f
+```
+
+Wireshark protocol hierarchy confirms actual data-channel content:
+
+```text
+btl2cap: 96 frames
+btatt:   88 frames
+btsmp:    8 frames
+```
+
+Important sequence:
+
+```text
+26.139s ATT Exchange MTU Request, Client Rx MTU 527
+26.154s ATT Exchange MTU Response, Server Rx MTU 23
+26.236s ATT Write Request to handle 0x000f (Service Changed CCCD)
+
+30.001s SMP Pairing Request: Bonding, MITM; initiator keys IRK/CSRK; responder keys LTK/IRK/CSRK
+30.009s SMP Pairing Response: Bonding; responder key LTK only
+30.069s SMP Pairing Confirm
+30.091s SMP Pairing Random
+30.145s SMP Encryption Information + Central Identification
+
+30.106s LL_ENC_REQ
+30.114s LL_ENC_RSP
+30.129s LL_START_ENC_REQ
+30.136s/30.144s LL_START_ENC_RSP
+```
+
+After pairing/encryption, Windows performs full GATT discovery. Handles discovered:
+
+```text
+0x0001..0x000b GAP
+0x000c..0x000f GATT / Service Changed
+0x0010..0x0014 Device Information
+0x0015..0x0018 KORG/vendor service D0611E78-BBB4-4591-A5F8-487910AE4366
+  characteristic value handle 0x0017: 8667556C-9A37-4C91-84ED-54EE27D90049
+  CCCD handle 0x0018
+0x0019..0x001c BLE-MIDI service 03B80E5A-EDE8-4B33-A751-6CE34EC4C700
+  characteristic value handle 0x001b: 7772E5DB-3868-4112-A1A9-F2669D106BF3
+  CCCD handle 0x001c
+```
+
+Limitations of `5.pcapng`:
+
+- The capture contains pairing/encryption and GATT discovery, which is the key missing evidence so far.
+- It does **not** show writes to the KORG vendor CCCD `0x0018` or BLE-MIDI CCCD `0x001c`; the only ATT Write Request decoded is to Service Changed CCCD `0x000f` before pairing.
+- It does **not** show BLE-MIDI Handle Value Notifications (`btatt.opcode == 0x1b`). Either Windows did not open/use the MIDI endpoint during this capture, notifications were not generated, or the capture ended/filtered before DAW/MIDI use.
+
+Key new conclusion: Windows succeeds by doing SMP pairing and LL encryption after initial GATT probing. The relevant security flow is visible in `5.pcapng` and can now be compared with macOS/CoreBluetooth behavior, where reads/notifies fail with `Authentication is insufficient` / `Encryption is insufficient`.
+
+## Windows nRF capture `6.pcapng` analysis, 2026-06-20
+
+This is the first capture containing the full useful flow: pairing/encryption, BLE-MIDI CCCD subscription, and actual BLE-MIDI notifications.
+
+```text
+file: 6.pcapng
+size: 305,600 bytes
+packets: 5,050
+CONNECT_IND frame: 7
+initA: E8:48:B8:C8:20:00
+advA:  10:98:C3:53:6B:1B
+connection access address: 8acbdbaf (display) / afdbcb8a (little-endian in file)
+connection access address occurrences: 5,044 packets
+connection interval: 7.5ms
+latency: 0
+supervision timeout: 2s
+```
+
+Protocol hierarchy:
+
+```text
+btl2cap: 171 frames
+btatt:   161 frames
+btsmp:     8 frames
+```
+
+Security sequence is the same Windows success pattern as `5.pcapng`, but earlier in the capture:
+
+```text
+5.804s SMP Pairing Request: Bonding, MITM; initiator keys IRK/CSRK; responder keys LTK/IRK/CSRK
+5.811s SMP Pairing Response: Bonding; responder key LTK only
+5.871s SMP Pairing Confirm
+5.886s SMP Pairing Random
+5.901s LL_ENC_REQ
+5.909s LL_ENC_RSP
+5.924s LL_START_ENC_REQ
+5.931s/5.939s LL_START_ENC_RSP
+5.939s SMP Encryption Information + Central Identification
+```
+
+BLE-MIDI subscription and traffic:
+
+```text
+6.096s ATT Read Request, Handle 0x001b (BLE-MIDI characteristic value)
+6.111s ATT Read Response, Handle 0x001b, value 00
+6.156s ATT Read Request, Handle 0x001c (BLE-MIDI CCCD)
+6.186s ATT Read Response, Handle 0x001c
+
+9.224s ATT Write Request, Handle 0x001c (BLE-MIDI CCCD)
+       Service UUID: 03B80E5A-EDE8-4B33-A751-6CE34EC4C700
+       Characteristic UUID: 7772E5DB-3868-4112-A1A9-F2669D106BF3
+       CCCD value: 0x0001 Notification = True
+9.231s ATT Write Response, Handle 0x001c
+
+10.221s onward: many ATT Handle Value Notifications from handle 0x001b
+```
+
+Example BLE-MIDI notification payloads from handle `0x001b`:
+
+```text
+95 ed 90 47 4d
+97 c3 80 47 40
+9e 9f 90 47 3d
+9f db 80 47 40
+a0 ae 90 47 2d
+a1 d0 80 47 40
+```
+
+These look like standard BLE-MIDI packets: timestamp bytes followed by MIDI channel messages (`0x90` note on, `0x80` note off) with note/velocity bytes.
+
+No write to KORG vendor CCCD `0x0018` or vendor characteristic `0x0017` was observed in the extracted traffic. Windows appears to use the standard BLE-MIDI characteristic after pairing/encryption, not a vendor-specific handshake, at least in this successful MIDI-use capture.
+
+Key conclusion from `6.pcapng`: the complete Windows working path is:
+
+1. Connect to nanoKEY.
+2. Do SMP pairing with Bonding + MITM requested by central.
+3. Start LL encryption.
+4. Discover GATT.
+5. Subscribe to BLE-MIDI CCCD handle `0x001c` with value `0x0001`.
+6. Receive BLE-MIDI notifications from value handle `0x001b`.
+
+This is the concrete behavior the macOS workaround/bridge must reproduce or cause CoreBluetooth to initiate.
+
 ## Current recommended next steps
 
 1. Improve `dump-ble.m` into a repeatable security diagnostic:
