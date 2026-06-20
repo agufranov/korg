@@ -21,6 +21,8 @@ npm run dump       # GATT dump через Node/noble
 npm run dump:objc  # GATT dump напрямую через macOS CoreBluetooth
 ```
 
+Wireshark CLI tools (`tshark`, `capinfos`, `editcap`, `mergecap`, `rawshark`) установлены через Homebrew в `/opt/homebrew/bin`. Дальше `.pcapng`-дампы разбираем ими, а не самописным быстрым парсером.
+
 Самый важный результат дал `npm run dump:objc`: macOS напрямую сообщает, что для чтения/notify не хватает BLE security:
 
 ```text

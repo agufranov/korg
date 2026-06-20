@@ -27,6 +27,12 @@ We are doing diagnostics/reverse engineering, not just following the official in
 - Shell: `/bin/zsh`
 - Node: `v24.15.0`
 - npm: `11.12.1`
+- Wireshark CLI tools are installed under `/opt/homebrew/bin` and should be used for future capture analysis instead of ad-hoc parsers:
+  - `tshark` — Wireshark `4.6.6`
+  - `capinfos` — Wireshark `4.6.6`
+  - `editcap`
+  - `mergecap`
+  - `rawshark`
 - Swift exists but local CommandLineTools Swift/SDK are mismatched and cannot build CoreBluetooth Swift code.
 - Objective-C + clang CoreBluetooth build works.
 
