@@ -243,6 +243,77 @@ Note: plain `log` can conflict with zsh behavior; use `/usr/bin/log`.
 
 ## Current recommended next steps
 
+## Windows nRF capture `wireshark.pcapng` analysis, 2026-06-20
+
+User provided `wireshark.pcapng` captured on Windows with `nRF Sniffer for Bluetooth LE COM5`.
+
+Local tools available on macOS:
+
+- `tshark`/`capinfos` are not installed.
+- `tcpdump` can read pcapng but reports Nordic BLE link type as `UNSUPPORTED`, so a small Python pcapng/Nordic parser was used.
+
+Capture metadata/facts:
+
+```text
+file: wireshark.pcapng
+size: ~1.1 MB
+pcapng linktype: 272 / LINKTYPE_NORDIC_BLE
+capture OS string: 64-bit Windows 10 (22H2), build 19045
+sniffer: nRF Sniffer for Bluetooth LE COM5
+duration: ~51.056875 s
+packets: 13458
+```
+
+Advertising facts extracted:
+
+```text
+nanoKEY advertiser address: 10:98:C3:53:6B:1B
+advertised name: nanoKEY Studio
+advertised service: 03B80E5A-EDE8-4B33-A751-6CE34EC4C700
+```
+
+Windows central/init address seen in CONNECT_IND:
+
+```text
+E8:48:B8:C8:20:00
+```
+
+Two connection requests were captured:
+
+```text
+packet 1779, +1.074413s:
+  initA: E8:48:B8:C8:20:00
+  advA:  10:98:C3:53:6B:1B
+  access address: b45fa108
+  interval: 6 * 1.25ms = 7.5ms
+  latency: 0
+  supervision timeout: 200 * 10ms = 2s
+
+packet 10917, +38.138287s:
+  initA: E8:48:B8:C8:20:00
+  advA:  10:98:C3:53:6B:1B
+  access address: 5e421abb
+  interval: 6 * 1.25ms = 7.5ms
+  latency: 0
+  supervision timeout: 200 * 10ms = 2s
+```
+
+Critical limitation of this capture:
+
+```text
+The pcapng contains CONNECT_IND packets, but no packets using either connection access address beyond the CONNECT_IND itself.
+Occurrences in raw file:
+  b45fa108: 1
+  5e421abb: 1
+  advertising access address d6be898e: 13458
+```
+
+Interpretation: the nRF sniffer did not follow the data-channel connection. The capture is useful for advertisement/connection-request facts, but it does not include SMP pairing, LL encryption, ATT/GATT writes, CCCD subscription, or MIDI notifications.
+
+Next capture must ensure Wireshark/nRF Sniffer follows the selected `nanoKEY Studio` connection. In Wireshark, select the device in the nRF Sniffer device list before/while connecting and verify packets with the new connection access address appear after CONNECT_IND.
+
+## Current recommended next steps
+
 1. Improve `dump-ble.m` into a repeatable security diagnostic:
    - log every relevant CoreBluetooth delegate callback;
    - log `CBPeripheral.state` transitions;
@@ -274,6 +345,7 @@ Note: plain `log` can conflict with zsh behavior; use `/usr/bin/log`.
    - Highest-value artifact: a BLE trace of successful Windows connection.
    - If no external sniffer exists, collect Windows ETW Bluetooth logs and driver/app metadata first.
    - If an nRF52840 dongle can be acquired, capture over-the-air pairing/security and ATT flow with Wireshark.
+   - First provided nRF capture only caught advertising + CONNECT_IND, not data-channel traffic. Need recapture with connection following enabled/verified.
 
 ## Things not to assume
 

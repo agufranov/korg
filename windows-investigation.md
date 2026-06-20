@@ -219,6 +219,33 @@ ATT
 9. Нажать несколько клавиш.
 10. Сохранить `.pcapng`.
 
+### Важно: проверить, что sniffer реально пошёл за соединением
+
+Первый полученный capture поймал `CONNECT_IND`, но не поймал data-channel пакеты после подключения. Это значит, что nRF Sniffer видел рекламу и запрос подключения, но **не follow'ил connection**.
+
+Перед сохранением нового capture проверь в Wireshark:
+
+1. В окне/панели nRF Sniffer выбран именно `nanoKEY Studio`, а не просто общий advertising stream.
+2. После `CONNECT_IND` появляются пакеты не только с advertising access address `0x8E89BED6`, но и с новым connection access address из `CONNECT_IND`.
+3. В списке протоколов/пакетов видны хотя бы некоторые из:
+   - `LL_ENC_REQ`, `LL_ENC_RSP`, `LL_START_ENC_REQ`, `LL_START_ENC_RSP`;
+   - `SMP Pairing Request/Response`;
+   - `ATT`, `GATT`, `Write Request`, `Write Command`, `Handle Value Notification`;
+   - обращения к handle `0x2902`/CCCD или BLE-MIDI characteristic.
+
+Если после подключения в Wireshark всё ещё идут только `ADV_IND`/`SCAN_RSP` от nanoKEY и нет data-channel пакетов — capture для нашей главной задачи неполный. Нужно перезапустить capture, выбрать устройство в nRF Sniffer device list и повторить подключение.
+
+Практический порядок для повторного capture:
+
+1. Выключить nanoKEY Studio.
+2. Запустить Wireshark capture на `nRF Sniffer for Bluetooth LE`.
+3. Включить nanoKEY Studio и дождаться `nanoKEY Studio` в device list.
+4. Кликнуть/выбрать `nanoKEY Studio` в nRF Sniffer toolbar/device list.
+5. Только после этого нажать Connect в Windows/KORG.
+6. Убедиться, что после CONNECT_IND появляются data-channel пакеты.
+7. Нажать несколько клавиш.
+8. Сохранить `.pcapng`.
+
 Что хотим увидеть:
 
 - LL connection setup;
