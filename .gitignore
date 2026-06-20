@@ -1,5 +1,4 @@
 node_modules
-*.pcapng
 *.pcap
 *.etl
 *.cab
